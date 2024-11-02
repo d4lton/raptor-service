@@ -15,12 +15,14 @@ async def get_test(site_id: str = Path(..., description="Sharepoint Site ID"), i
     excel = win32.gencache.EnsureDispatch("Excel.Application")
     excel.Visible = False
     try:
-        print(site_id, item_id)
         workbook = excel.Workbooks.Open(r"C:\Users\dana\raptor-service\test.xlsx")
         worksheets = [sheet.Name for sheet in workbook.Worksheets]
 
         worksheet = Worksheet("M - Monthly", workbook)
         durable_ids = worksheet.get_durable_ids()
+        income_statement_returns, durable_id_type = durable_ids.get_durable_id("incomeStatement.returns")
+        # TODO: do something to income_statement_returns
+        durable_ids.set_durable_id_values("incomeStatement.returns", income_statement_returns)
 
         # 'incomeStatement.returns'
         # TODO:
@@ -36,10 +38,8 @@ async def get_test(site_id: str = Path(..., description="Sharepoint Site ID"), i
         # workbook.Save()
         workbook.Close(SaveChanges=False)
 
-        excel.Quit()
         print(f"{time.time() - start_time}")
         return {"worksheets": worksheets}
     except Exception as exception:
         print(exception)
-        excel.Quit()
         return {"error": f"{type(exception)}"}
