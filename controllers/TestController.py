@@ -6,26 +6,11 @@ import time
 import win32com.client as win32
 from fastapi import APIRouter, Path
 from models.Worksheet import Worksheet
-from services import SharepointGroupService
 
 router = APIRouter(prefix="/api/v1", tags=["Test"])
 
-@router.get("/group", summary="Get groups")
-async def get_groups():
-    return await SharepointGroupService.get_groups()
-
-@router.get("/group/{group_id}/item/{item_id}", summary="Get a drive item")
-async def get_drive_item(group_id, item_id):
-    return await SharepointGroupService.get_drive_item(group_id, item_id)
-
-@router.get("/group/{group_id}/item/{item_id}/list", summary="Get drive items under a folder")
-async def get_drive_items(group_id, item_id):
-    return await SharepointGroupService.get_folder_items(group_id, item_id)
-
 @router.get("/site/{site_id}/item/{item_id}/test", summary="Perform some example operations with Excel")
-async def get_test(
-        site_id: str = Path(..., description="Sharepoint Site ID"),
-        item_id: str = Path(..., description="Sharepoint Item ID")):
+async def get_test(site_id: str = Path(..., description="Sharepoint Site ID"), item_id: str = Path(..., description="Sharepoint Item ID")):
     start_time = time.time()
     excel = win32.gencache.EnsureDispatch("Excel.Application")
     excel.Visible = False

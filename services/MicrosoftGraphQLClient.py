@@ -27,8 +27,9 @@ def request(method, endpoint):
         "Content-Type": "application/json",
         "Prefer": "respond-async",
         "Consistency-Level": "eventual",
-        "User-Agent": "NONISV|bainbridgegrowth.com|Drivepoint/1.0.0"
+        "User-Agent": f"NONISV|bainbridgegrowth.com|Drivepoint/{settings.get("version")}"
     }
     url = f"{GRAPH_API_ENDPOINT}{endpoint}"
+    # probably swap this out for something like tornado - https://www.tornadoweb.org/
     response = requests.request(method, url, headers=headers).json()
     return response
