@@ -7,7 +7,7 @@ from config import settings
 from ExcelFarm import ExcelFarm
 from controllers import TestController, DriveItemController, GroupController
 
-farm = ExcelFarm(10)
+ExcelFarm()
 
 app = FastAPI(title="Drivepoint Raptor Service", version=settings.get("version"))
 
@@ -15,5 +15,5 @@ app.include_router(DriveItemController.router)
 app.include_router(GroupController.router)
 app.include_router(TestController.router)
 
-farm.add_task(r"C:\Users\dana\raptor-service\test.xlsx")
-farm.add_task(r"C:\Users\dana\raptor-service\test2.xlsx")
+# farm.add_task(r"C:\Users\dana\raptor-service\test.xlsx")
+# farm.add_task(r"C:\Users\dana\raptor-service\test2.xlsx")

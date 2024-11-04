@@ -1,72 +1,21 @@
 #
 # Copyright ©2024 Dana Basken
 #
-import asyncio
-from contextlib import asynccontextmanager
-import time
-import pythoncom
-import win32com.client as win32
-from fastapi import APIRouter, FastAPI, Path
-from win32com.client import Dispatch
 
+import time
+import win32com.client as win32
+from fastapi import APIRouter, Path
+
+from ExcelFarm import ExcelFarm
 from models.Worksheet import Worksheet
 
 router = APIRouter(prefix="/api/v1", tags=["Test"])
 
-excel_service_app = None
-# semaphore = asyncio.Semaphore(1)
-workbook_semaphore = asyncio.Semaphore(5)
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("lifespan startup")
-    global excel_service_app
-    pythoncom.CoInitialize()
-    excel_app = Dispatch("Excel.Application")
-    yield
-    print("lifespan shutdown")
-    if excel_app:
-        excel_app.Quit()
-        excel_app = None
-
-# router.lifespan_context = lifespan
-
-# def do_thing():
-#     excel = None
-#     try:
-#         print("starting")
-#         pythoncom.CoInitialize()
-#         excel = win32.Dispatch("Excel.Application")
-#         workbook = excel.Workbooks.Open(r"C:\Users\dana\raptor-service\test.xlsx")
-#         workbook.Close(SaveChanges=False)
-#         print("ending")
-#     except Exception as exception:
-#         print(exception)
-#     finally:
-#         print("finally")
-#         if excel: excel.Quit()
-#         pythoncom.CoUninitialize()
-
-def do_stuff():
-    pythoncom.CoInitialize()
-    try:
-        workbook = excel_service_app.Workbooks.Open(r"C:\Users\dana\raptor-service\test.xlsx")
-        workbook.Close(SaveChanges=False)
-    finally:
-        pythoncom.CoUninitialize()
-    return {}
-
-@router.get("/stuff")
-async def get_stuff():
-    async with workbook_semaphore:
-        result = await asyncio.to_thread(do_stuff)
-    return result
-
-# @router.get("/thing")
-# async def get_thing():
-#     async with semaphore:
-#         result = await asyncio.to_thread(do_thing)
-#     return result
+@router.get("/stuff/:path")
+async def get_stuff(path: str):
+    farm = ExcelFarm()
+    id = farm.add_task(path)
+    return {"id": id, "path": path}
 
 @router.get("/site/{site_id}/item/{item_id}/test", summary="Perform some example operations with Excel")
 async def get_test(site_id: str = Path(..., description="Sharepoint Site ID"), item_id: str = Path(..., description="Sharepoint Item ID")):

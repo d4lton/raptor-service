@@ -8,13 +8,21 @@ import win32com.client as win32
 import pythoncom
 import uuid
 
-class ExcelFarm:
+class ExcelFarm(object):
 
-    def __init__(self, worker_count: int = 5):
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(ExcelFarm, cls).__new__(cls, *args, **kwargs)
+            cls._instance._initialize()
+        return cls._instance
+
+    def _initialize(self):
         self._workers = []
         self._requests = multiprocessing.Queue()
         self._responses = multiprocessing.Queue()
-        self._start_workers(worker_count)
+        self._start_workers(5)
         asyncio.create_task(self._response_handler(self._responses))
 
     def add_task(self, workbook_path: str) -> str:
