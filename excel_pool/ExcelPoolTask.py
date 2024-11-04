@@ -5,4 +5,5 @@
 from pydantic import BaseModel
 
 class ExcelPoolTask(BaseModel):
-    path: str
+    site_id: str
+    item_id: str

@@ -4,11 +4,18 @@
 
 import asyncio
 import multiprocessing
+import os
+import tempfile
+import time
+
 import win32com.client as win32
 import pythoncom
 import uuid
 from excel_pool.ExcelPoolTask import ExcelPoolTask
 from config import settings
+from models.Worksheet import Worksheet
+from services.SharepointGroupService import get_drive_item
+from requests import request
 
 class ExcelPool(object):
 
@@ -63,17 +70,52 @@ class ExcelPool(object):
                     task = requests.get()
                     print("task", task)
                     if task == "STOP": break
+                    start_time = time.time()
                     task_id = task["id"]
-                    responses.put({"id": task_id, "state": "running"})
+                    responses.put({"id": task_id, "state": "running", "phase": "starting", "duration": time.time() - start_time})
                     excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
-                    path = excel_pool_task.path
-                    print("opening workbook", path)
-                    workbook = excel.Workbooks.Open(path)
+
+                    # NOTE: any COM calls can fail due to Excel not handling simultaneous requests. solution seems to be
+                    #  to create retry wrappers for all COM calls (use the @retry decorator)
+
+                    # TODO: get sharepoint doc using site_id and item_id
+                    responses.put({"id": task_id, "state": "running", "phase": "get_drive_item", "duration": time.time() - start_time})
+                    drive_item = get_drive_item(excel_pool_task.site_id, excel_pool_task.item_id)
+                    responses.put({"id": task_id, "state": "running", "phase": "download_drive_item", "duration": time.time() - start_time})
+                    response = request("GET", drive_item["@microsoft.graph.downloadUrl"], stream=True)
+                    responses.put({"id": task_id, "state": "running", "phase": "stream_drive_item", "duration": time.time() - start_time})
+                    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                        for chunk in response.iter_content(chunk_size=8192): temp_file.write(chunk)
+                        temp_file_path = temp_file.name
+
+                    responses.put({"id": task_id, "state": "running", "phase": "open_workbook", "duration": time.time() - start_time})
+                    workbook = excel.Workbooks.Open(temp_file_path) # TODO: RETRY
+
                     # TODO: something
-                    print("closing workbook", path)
-                    workbook.Close(SaveChanges=False)
-                    responses.put({"id": task_id, "result": {}, "state": "complete"})
-                    print("task complete", task)
+                    responses.put({"id": task_id, "state": "running", "phase": "create_worksheet", "duration": time.time() - start_time})
+                    worksheet = Worksheet("M - Monthly", workbook)
+                    responses.put({"id": task_id, "state": "running", "phase": "get_durable_ids", "duration": time.time() - start_time})
+                    durable_ids = worksheet.get_durable_ids() # TODO: RETRY
+                    responses.put({"id": task_id, "state": "running", "phase": "get_durable_id", "duration": time.time() - start_time})
+                    income_statement_returns, durable_id_type = durable_ids.get_durable_id("incomeStatement.returns")
+                    # TODO: do something to income_statement_returns
+                    responses.put({"id": task_id, "state": "running", "phase": "set_durable_id_values", "duration": time.time() - start_time})
+                    durable_ids.set_durable_id_values("incomeStatement.returns", income_statement_returns) # TODO: RETRY
+
+                    responses.put({"id": task_id, "state": "running", "phase": "calculate_workbook", "duration": time.time() - start_time})
+                    workbook.Application.CalculateFull() # TODO: RETRY
+
+                    responses.put({"id": task_id, "state": "running", "phase": "get_durable_ids_2", "duration": time.time() - start_time})
+                    durable_ids = worksheet.get_durable_ids() # TODO: RETRY
+                    # TODO: send durable_ids to DWH
+
+                    responses.put({"id": task_id, "state": "running", "phase": "close_workbook", "duration": time.time() - start_time})
+                    workbook.Close(SaveChanges=False) # TODO: RETRY
+
+                    responses.put({"id": task_id, "state": "running", "phase": "delete_workbook", "duration": time.time() - start_time})
+                    os.remove(temp_file_path)
+
+                    responses.put({"id": task_id, "result": {}, "state": "complete", "duration": time.time() - start_time})
                 except KeyboardInterrupt:
                     print("quitting excel")
                     excel.Quit()
@@ -85,3 +127,4 @@ class ExcelPool(object):
             print(exception)
         finally:
             pythoncom.CoUninitialize()
+            responses.put({"id": "EXCEL", "state": "exited"})

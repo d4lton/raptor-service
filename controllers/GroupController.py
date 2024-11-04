@@ -8,5 +8,5 @@ from services import SharepointGroupService
 router = APIRouter(prefix="/api/v1/group", tags=["Groups"])
 
 @router.get("/", summary="Get groups")
-async def get_groups():
-    return await SharepointGroupService.get_groups()
+def get_groups():
+    return SharepointGroupService.get_groups()
