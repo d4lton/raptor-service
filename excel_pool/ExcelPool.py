@@ -7,14 +7,17 @@ import multiprocessing
 import win32com.client as win32
 import pythoncom
 import uuid
+from excel_pool.ExcelPoolTask import ExcelPoolTask
+from config import settings
 
-class ExcelFarm(object):
+class ExcelPool(object):
 
     _instance = None
+    _task_status: any = {}
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(ExcelFarm, cls).__new__(cls, *args, **kwargs)
+            cls._instance = super(ExcelPool, cls).__new__(cls, *args, **kwargs)
             cls._instance._initialize()
         return cls._instance
 
@@ -22,26 +25,32 @@ class ExcelFarm(object):
         self._workers = []
         self._requests = multiprocessing.Queue()
         self._responses = multiprocessing.Queue()
-        self._start_workers(5)
+        self._start_workers(settings.get("excel_pool.workers", 5))
         asyncio.create_task(self._response_handler(self._responses))
 
-    def add_task(self, workbook_path: str) -> str:
+    def add_task(self, excel_pool_task: ExcelPoolTask) -> str:
         id = str(uuid.uuid4())
-        self._requests.put({"id": id, "workbook_path": workbook_path})
+        self._responses.put({"id": id, "state": "pending"})
+        self._requests.put({"id": id, "excel_pool_task": excel_pool_task})
         return id
 
+    def get_task_status(self, id: str) -> any:
+        return self._task_status[id]
+
     def _start_workers(self, worker_count: int):
+        print(f"starting {worker_count} workers...")
         for index in range(worker_count):
             worker_process = multiprocessing.Process(target=self._worker, args=(self._requests, self._responses))
             worker_process.start()
             self._workers.append(worker_process)
+        print("workers started.")
 
-    @staticmethod
-    async def _response_handler(responses):
+    async def _response_handler(self, responses):
         loop = asyncio.get_event_loop()
         while True:
-            result = await loop.run_in_executor(None, responses.get)
-            print(result)
+            status: any = await loop.run_in_executor(None, responses.get)
+            print("_response_handler", status)
+            self._task_status[id] = status
 
     @staticmethod
     def _worker(requests: multiprocessing.Queue, responses: multiprocessing.Queue):
@@ -55,19 +64,23 @@ class ExcelFarm(object):
                     print("task", task)
                     if task == "STOP": break
                     task_id = task["id"]
-                    workbook_path = task["workbook_path"]
-                    print("opening workbook", workbook_path)
-                    workbook = excel.Workbooks.Open(workbook_path)
+                    responses.put({"id": task_id, "state": "running"})
+                    excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
+                    path = excel_pool_task.path
+                    print("opening workbook", path)
+                    workbook = excel.Workbooks.Open(path)
                     # TODO: something
-                    print("closing workbook", workbook_path)
+                    print("closing workbook", path)
                     workbook.Close(SaveChanges=False)
-                    responses.put({"id": task_id, "result": {}})
+                    responses.put({"id": task_id, "result": {}, "state": "complete"})
                     print("task complete", task)
+                except KeyboardInterrupt:
+                    print("quitting excel")
+                    excel.Quit()
+                    break
                 except Exception as exception:
                     print("error", exception)
-                    responses.put({"id": task_id, "error": str(exception)})
-            print("quitting excel")
-            excel.Quit()
+                    responses.put({"id": task_id, "error": str(exception), "state": "complete"})
         except Exception as exception:
             print(exception)
         finally:

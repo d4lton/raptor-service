@@ -5,17 +5,17 @@
 import time
 import win32com.client as win32
 from fastapi import APIRouter, Path
-
-from ExcelFarm import ExcelFarm
+from excel_pool.ExcelPoolTask import ExcelPoolTask
+from excel_pool.ExcelPool import ExcelPool
 from models.Worksheet import Worksheet
 
 router = APIRouter(prefix="/api/v1", tags=["Test"])
 
-@router.get("/stuff/:path")
-async def get_stuff(path: str):
-    farm = ExcelFarm()
-    id = farm.add_task(path)
-    return {"id": id, "path": path}
+@router.post("/stuff/")
+async def post_stuff(excel_pool_task: ExcelPoolTask):
+    farm = ExcelPool()
+    id = farm.add_task(excel_pool_task)
+    return {"id": id, "excel_pool_task": excel_pool_task}
 
 @router.get("/site/{site_id}/item/{item_id}/test", summary="Perform some example operations with Excel")
 async def get_test(site_id: str = Path(..., description="Sharepoint Site ID"), item_id: str = Path(..., description="Sharepoint Item ID")):
