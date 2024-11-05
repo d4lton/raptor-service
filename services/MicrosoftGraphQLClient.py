@@ -4,6 +4,7 @@
 
 import requests
 from msal import ConfidentialClientApplication
+from tenacity import retry, stop_after_attempt, wait_random_exponential
 from config import settings
 
 GRAPH_API_ENDPOINT = "https://graph.microsoft.com/v1.0/"
@@ -21,6 +22,7 @@ if "access_token" in result:
 else:
     raise Exception("failed to acquire token")
 
+@retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
 def request(method, endpoint):
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -30,6 +32,5 @@ def request(method, endpoint):
         "User-Agent": f"NONISV|bainbridgegrowth.com|Drivepoint/{settings.get("version")}"
     }
     url = f"{GRAPH_API_ENDPOINT}{endpoint}"
-    # probably swap this out for something like tornado - https://www.tornadoweb.org/
     response = requests.request(method, url, headers=headers).json()
     return response

@@ -3,19 +3,24 @@
 #
 
 import asyncio
+import logging
 import multiprocessing
 import os
 import tempfile
 import time
-
+import exceltypes
 import win32com.client as win32
 import pythoncom
 import uuid
 from excel_pool.ExcelPoolTask import ExcelPoolTask
 from config import settings
+from models.DurableIds import DurableIds
 from models.Worksheet import Worksheet
 from services.SharepointGroupService import get_drive_item
 from requests import request
+from tenacity import retry, stop_after_attempt, wait_random_exponential
+
+logger = logging.getLogger(__name__)
 
 class ExcelPool(object):
 
@@ -45,22 +50,39 @@ class ExcelPool(object):
         return self._task_status[id]
 
     def _start_workers(self, worker_count: int):
-        print(f"starting {worker_count} workers...")
+        logger.info(f"starting {worker_count} workers...")
         for index in range(worker_count):
             worker_process = multiprocessing.Process(target=self._worker, args=(self._requests, self._responses))
             worker_process.start()
             self._workers.append(worker_process)
-        print("workers started.")
+        logger.info("workers started.")
 
     async def _response_handler(self, responses):
         loop = asyncio.get_event_loop()
         while True:
             status: any = await loop.run_in_executor(None, responses.get)
-            print("_response_handler", status)
+            logger.debug(f"_response_handler {status}")
             self._task_status[id] = status
 
     @staticmethod
     def _worker(requests: multiprocessing.Queue, responses: multiprocessing.Queue):
+
+        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
+        def _open_workbook(excel: exceltypes.Application, file_path: str) -> exceltypes.Workbook:
+            return excel.Workbooks.Open(file_path)
+
+        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
+        def _get_durable_ids(worksheet: Worksheet) -> DurableIds:
+            return worksheet.get_durable_ids()
+
+        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
+        def _set_durable_id_values(durable_ids: DurableIds, durable_id: str, values: any):
+            durable_ids.set_durable_id_values(durable_id, values)
+
+        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
+        def _calculate(workbook: exceltypes.Workbook):
+            workbook.Application.CalculateFull()
+
         try:
             pythoncom.CoInitialize()
             excel = win32.DispatchEx("Excel.Application")
@@ -68,19 +90,15 @@ class ExcelPool(object):
             while True:
                 try:
                     task = requests.get()
-                    print("task", task)
                     if task == "STOP": break
                     start_time = time.time()
                     task_id = task["id"]
                     responses.put({"id": task_id, "state": "running", "phase": "starting", "duration": time.time() - start_time})
                     excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
 
-                    # NOTE: any COM calls can fail due to Excel not handling simultaneous requests. solution seems to be
-                    #  to create retry wrappers for all COM calls (use the @retry decorator)
-
-                    # TODO: get sharepoint doc using site_id and item_id
                     responses.put({"id": task_id, "state": "running", "phase": "get_drive_item", "duration": time.time() - start_time})
                     drive_item = get_drive_item(excel_pool_task.site_id, excel_pool_task.item_id)
+
                     responses.put({"id": task_id, "state": "running", "phase": "download_drive_item", "duration": time.time() - start_time})
                     response = request("GET", drive_item["@microsoft.graph.downloadUrl"], stream=True)
                     responses.put({"id": task_id, "state": "running", "phase": "stream_drive_item", "duration": time.time() - start_time})
@@ -89,24 +107,28 @@ class ExcelPool(object):
                         temp_file_path = temp_file.name
 
                     responses.put({"id": task_id, "state": "running", "phase": "open_workbook", "duration": time.time() - start_time})
-                    workbook = excel.Workbooks.Open(temp_file_path) # TODO: RETRY
+                    workbook = _open_workbook(excel, temp_file_path)
 
-                    # TODO: something
-                    responses.put({"id": task_id, "state": "running", "phase": "create_worksheet", "duration": time.time() - start_time})
+                    responses.put({"id": task_id, "state": "running", "phase": "construct_worksheet", "duration": time.time() - start_time})
                     worksheet = Worksheet("M - Monthly", workbook)
+
                     responses.put({"id": task_id, "state": "running", "phase": "get_durable_ids", "duration": time.time() - start_time})
-                    durable_ids = worksheet.get_durable_ids() # TODO: RETRY
+                    durable_ids = _get_durable_ids(worksheet)
+
                     responses.put({"id": task_id, "state": "running", "phase": "get_durable_id", "duration": time.time() - start_time})
                     income_statement_returns, durable_id_type = durable_ids.get_durable_id("incomeStatement.returns")
+
                     # TODO: do something to income_statement_returns
+
                     responses.put({"id": task_id, "state": "running", "phase": "set_durable_id_values", "duration": time.time() - start_time})
-                    durable_ids.set_durable_id_values("incomeStatement.returns", income_statement_returns) # TODO: RETRY
+                    _set_durable_id_values(durable_ids, "incomeStatement.returns", income_statement_returns)
 
                     responses.put({"id": task_id, "state": "running", "phase": "calculate_workbook", "duration": time.time() - start_time})
-                    workbook.Application.CalculateFull() # TODO: RETRY
+                    _calculate(workbook)
 
                     responses.put({"id": task_id, "state": "running", "phase": "get_durable_ids_2", "duration": time.time() - start_time})
-                    durable_ids = worksheet.get_durable_ids() # TODO: RETRY
+                    durable_ids = _get_durable_ids(worksheet)
+
                     # TODO: send durable_ids to DWH
 
                     responses.put({"id": task_id, "state": "running", "phase": "close_workbook", "duration": time.time() - start_time})
@@ -117,7 +139,6 @@ class ExcelPool(object):
 
                     responses.put({"id": task_id, "result": {}, "state": "complete", "duration": time.time() - start_time})
                 except KeyboardInterrupt:
-                    print("quitting excel")
                     excel.Quit()
                     break
                 except Exception as exception:
