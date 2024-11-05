@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
   "excel_pool": {
-    "workers": 3
+    "workers": 5
   }
 }

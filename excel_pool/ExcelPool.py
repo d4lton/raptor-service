@@ -50,18 +50,21 @@ class ExcelPool(object):
         return self._task_status[id]
 
     def _start_workers(self, worker_count: int):
-        logger.info(f"starting {worker_count} workers...")
+        logger.debug(f"starting {worker_count} workers...")
         for index in range(worker_count):
             worker_process = multiprocessing.Process(target=self._worker, args=(self._requests, self._responses))
             worker_process.start()
             self._workers.append(worker_process)
-        logger.info("workers started.")
+        logger.debug("workers started.")
 
     async def _response_handler(self, responses):
         loop = asyncio.get_event_loop()
         while True:
             status: any = await loop.run_in_executor(None, responses.get)
-            logger.debug(f"_response_handler {status}")
+            if "error" in status:
+                logger.error(f"_response_handler {status}")
+            else:
+                logger.info(f"_response_handler {status}")
             self._task_status[id] = status
 
     @staticmethod
@@ -83,6 +86,12 @@ class ExcelPool(object):
         def _calculate(workbook: exceltypes.Workbook):
             workbook.Application.CalculateFull()
 
+        def _handle_task(task: any, responses: multiprocessing.Queue):
+            start_time = time.time()
+            task_id = task["id"]
+            responses.put({"id": task_id, "state": "running", "phase": "starting", "duration": time.time() - start_time})
+            excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
+
         try:
             pythoncom.CoInitialize()
             excel = win32.DispatchEx("Excel.Application")
@@ -91,6 +100,10 @@ class ExcelPool(object):
                 try:
                     task = requests.get()
                     if task == "STOP": break
+
+                    # TODO: move this into a _handle_task function, which can then figure out what the task should do
+                    # _handle_task(task, responses)
+
                     start_time = time.time()
                     task_id = task["id"]
                     responses.put({"id": task_id, "state": "running", "phase": "starting", "duration": time.time() - start_time})
