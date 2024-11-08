@@ -10,7 +10,7 @@ from utilities import Logging
 
 Logging.colorize()
 
-ExcelPool() # initialize ExcelPool singleton
+ExcelPool() # initialize ExcelPool singleton to "warm up" Excel processes
 
 app = FastAPI(title="Drivepoint Raptor Service", version=settings.get("version"))
 

@@ -5,20 +5,12 @@
 import asyncio
 import logging
 import multiprocessing
-import os
-import tempfile
-import time
-import exceltypes
 import win32com.client as win32
 import pythoncom
 import uuid
 from excel_pool.ExcelPoolTask import ExcelPoolTask
 from config import settings
-from models.DurableIds import DurableIds
-from models.Worksheet import Worksheet
-from services.SharepointGroupService import get_drive_item
-from requests import request
-from tenacity import retry, stop_after_attempt, wait_random_exponential
+from task_handlers.HandlerManager import HandlerManager
 
 logger = logging.getLogger(__name__)
 
@@ -70,93 +62,24 @@ class ExcelPool(object):
     @staticmethod
     def _worker(requests: multiprocessing.Queue, responses: multiprocessing.Queue):
 
-        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
-        def _open_workbook(excel: exceltypes.Application, file_path: str) -> exceltypes.Workbook:
-            return excel.Workbooks.Open(file_path)
-
-        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
-        def _get_durable_ids(worksheet: Worksheet) -> DurableIds:
-            return worksheet.get_durable_ids()
-
-        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
-        def _set_durable_id_values(durable_ids: DurableIds, durable_id: str, values: any):
-            durable_ids.set_durable_id_values(durable_id, values)
-
-        @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
-        def _calculate(workbook: exceltypes.Workbook):
-            workbook.Application.CalculateFull()
-
-        def _handle_task(task: any, responses: multiprocessing.Queue):
-            start_time = time.time()
-            task_id = task["id"]
-            responses.put({"id": task_id, "state": "running", "phase": "starting", "duration": time.time() - start_time})
-            excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
-
         try:
             pythoncom.CoInitialize()
             excel = win32.DispatchEx("Excel.Application")
             excel.Visible = False
+            task = {}
             while True:
                 try:
                     task = requests.get()
                     if task == "STOP": break
-
-                    # TODO: move this into a _handle_task function, which can then figure out what the task should do
-                    # _handle_task(task, responses)
-
-                    start_time = time.time()
-                    task_id = task["id"]
-                    responses.put({"id": task_id, "state": "running", "phase": "starting", "duration": time.time() - start_time})
                     excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
-
-                    responses.put({"id": task_id, "state": "running", "phase": "get_drive_item", "duration": time.time() - start_time})
-                    drive_item = get_drive_item(excel_pool_task.site_id, excel_pool_task.item_id)
-
-                    responses.put({"id": task_id, "state": "running", "phase": "download_drive_item", "duration": time.time() - start_time})
-                    response = request("GET", drive_item["@microsoft.graph.downloadUrl"], stream=True)
-                    responses.put({"id": task_id, "state": "running", "phase": "stream_drive_item", "duration": time.time() - start_time})
-                    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                        for chunk in response.iter_content(chunk_size=8192): temp_file.write(chunk)
-                        temp_file_path = temp_file.name
-
-                    responses.put({"id": task_id, "state": "running", "phase": "open_workbook", "duration": time.time() - start_time})
-                    workbook = _open_workbook(excel, temp_file_path)
-
-                    responses.put({"id": task_id, "state": "running", "phase": "construct_worksheet", "duration": time.time() - start_time})
-                    worksheet = Worksheet("M - Monthly", workbook)
-
-                    responses.put({"id": task_id, "state": "running", "phase": "get_durable_ids", "duration": time.time() - start_time})
-                    durable_ids = _get_durable_ids(worksheet)
-
-                    responses.put({"id": task_id, "state": "running", "phase": "get_durable_id", "duration": time.time() - start_time})
-                    income_statement_returns, durable_id_type = durable_ids.get_durable_id("incomeStatement.returns")
-
-                    # TODO: do something to income_statement_returns
-
-                    responses.put({"id": task_id, "state": "running", "phase": "set_durable_id_values", "duration": time.time() - start_time})
-                    _set_durable_id_values(durable_ids, "incomeStatement.returns", income_statement_returns)
-
-                    responses.put({"id": task_id, "state": "running", "phase": "calculate_workbook", "duration": time.time() - start_time})
-                    _calculate(workbook)
-
-                    responses.put({"id": task_id, "state": "running", "phase": "get_durable_ids_2", "duration": time.time() - start_time})
-                    durable_ids = _get_durable_ids(worksheet)
-
-                    # TODO: send durable_ids to DWH
-
-                    responses.put({"id": task_id, "state": "running", "phase": "close_workbook", "duration": time.time() - start_time})
-                    workbook.Close(SaveChanges=False) # TODO: RETRY
-
-                    responses.put({"id": task_id, "state": "running", "phase": "delete_workbook", "duration": time.time() - start_time})
-                    os.remove(temp_file_path)
-
-                    responses.put({"id": task_id, "result": {}, "state": "complete", "duration": time.time() - start_time})
+                    handler = HandlerManager.get_handler_for_task(excel_pool_task)
+                    handler.run(task, excel_pool_task, excel, responses)
                 except KeyboardInterrupt:
                     excel.Quit()
                     break
                 except Exception as exception:
                     print("error", exception)
-                    responses.put({"id": task_id, "error": str(exception), "state": "complete"})
+                    responses.put({"id": task["id"], "error": str(exception), "state": "error"})
         except Exception as exception:
             print(exception)
         finally:
