@@ -61,4 +61,4 @@ class DemoTaskHandler(BaseHandler):
         responses.put({"id": task_id, "state": "running", "phase": "delete_workbook", "duration": time.time() - start_time})
         os.remove(temp_file_path)
 
-        responses.put({"id": task_id, "result": {}, "state": "complete", "duration": time.time() - start_time})
+        responses.put({"id": task_id, "result": {}, "state": "success", "duration": time.time() - start_time})
