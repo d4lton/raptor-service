@@ -11,3 +11,4 @@ class ExcelPoolTask(BaseModel):
     type: ExcelPoolTaskType
     site_id: str
     item_id: str
+    data: dict

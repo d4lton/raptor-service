@@ -60,8 +60,7 @@ class ExcelPool(object):
             worker.join(10)
 
     def _on_cache_event(self, event):
-        logger.info(f"cache event: {event}")
-        pass
+        logger.debug(f"cache event: {event}")
 
     def _start_workers(self, worker_count: int):
         for index in range(worker_count):
@@ -92,7 +91,7 @@ class ExcelPool(object):
             while True:
                 try:
                     task = requests.get()
-                    if task == "STOP": break
+                    if not "excel_pool_task" in task: continue
                     excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
                     handler = HandlerManager.get_handler_for_task(excel_pool_task)
                     handler.run(task, excel_pool_task, excel, responses)

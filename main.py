@@ -2,9 +2,7 @@
 # Copyright ©2024 Dana Basken
 #
 
-import atexit
 import signal
-
 from fastapi import FastAPI
 from config import settings
 from excel_pool.ExcelPool import ExcelPool

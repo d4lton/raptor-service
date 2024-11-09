@@ -5,7 +5,6 @@
 from excel_pool.ExcelPoolTask import ExcelPoolTask
 from task_handlers.DemoTaskHandler import DemoTaskHandler
 
-
 class HandlerManager:
 
     @staticmethod
