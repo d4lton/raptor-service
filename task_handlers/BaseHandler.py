@@ -32,21 +32,21 @@ class BaseHandler:
         self.excel_pool_task = excel_pool_task
         self.excel = excel
         self.responses = responses
-        self.set_up()
-        self.process()
-        self.shutdown()
+        try:
+            self.set_up()
+            self.process()
+        finally:
+            self.shutdown()
+            self.add_response("success")
 
     def set_up(self):
         self.start_time = time.time()
         self.task_id = self.task["id"]
+        # read the Sharepoint drive item from MS Graph API:
         self.add_response("running", "get_drive_item")
         self.drive_item = self.get_drive_item(self.excel_pool_task.site_id, self.excel_pool_task.item_id)
-        self.add_response("running", "download_drive_item")
-        response = request("GET", self.drive_item["@microsoft.graph.downloadUrl"], stream=True)
-        self.add_response("running", "stream_drive_item")
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            for chunk in response.iter_content(chunk_size=8192): temp_file.write(chunk)
-            self.temp_file_path = temp_file.name
+        self.temp_file_path = self.download_drive_item_into_temp_file()
+        # open the local temp file in Excel and set our workbook variable:
         self.add_response("running", "open_workbook")
         self.workbook = self.open_workbook(self.excel, self.temp_file_path)
 
@@ -54,11 +54,38 @@ class BaseHandler:
         pass
 
     def shutdown(self):
-        self.add_response("running", "close_workbook")
-        self.workbook.Close(SaveChanges=False) # TODO: RETRY
-        self.add_response("running", "delete_workbook")
-        os.remove(self.temp_file_path)
-        self.add_response("success")
+        # close Workbook in Excel, if it was opened:
+        self.close_workbook()
+        # delete the temp file, if it was created:
+        if self.temp_file_path:
+            self.add_response("running", "delete_workbook")
+            os.remove(self.temp_file_path)
+
+    @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
+    def download_drive_item_into_temp_file(self) -> str:
+        temp_file_path = None
+        try:
+            # read the Sharepoint drive item from MS Graph API:
+            self.add_response("running", "get_drive_item")
+            self.drive_item = self.get_drive_item(self.excel_pool_task.site_id, self.excel_pool_task.item_id)
+            if not "@microsoft.graph.downloadUrl" in self.drive_item: raise Exception(f"Sharepoint Drive Item did not have '@microsoft.graph.downloadUrl'")
+            # use the "@microsoft.graph.downloadUrl" URL to stream the contents of the Sharepoint drive item down:
+            response = request("GET", self.drive_item["@microsoft.graph.downloadUrl"], stream=True)
+            self.add_response("running", "stream_drive_item")
+            # create a temp file and store the file stream into it:
+            with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                for chunk in response.iter_content(chunk_size=8192): temp_file.write(chunk)
+                temp_file_path = temp_file.name
+            return temp_file_path
+        except:
+            if temp_file_path: os.remove(self.temp_file_path)
+            raise
+
+    @retry(wait=wait_random_exponential(multiplier=1, max=10), stop=stop_after_attempt(5))
+    def close_workbook(self):
+        if self.workbook:
+            self.add_response("running", "close_workbook")
+            self.workbook.Close(SaveChanges=False)
 
     def add_response(self, state: str, phase: str | None = None):
         self.responses.put({"id": self.task_id, "state": state, "phase": phase, "duration": time.time() - self.start_time})
