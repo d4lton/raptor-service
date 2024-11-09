@@ -7,12 +7,14 @@ import logging
 import multiprocessing
 import os
 import time
+from typing import List
 import win32com.client as win32
 import pythoncom
 import uuid
 from excel_pool.ExcelPoolTask import ExcelPoolTask
 from config import settings
 from task_handlers.HandlerManager import HandlerManager
+from utilities.LRUCache import LRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +29,8 @@ class ExcelPool(object):
         return cls._instance
 
     def _initialize(self):
-        self._workers = []
-        self._task_status = {}
+        self._workers: List[multiprocessing.Process] = []
+        self._task_status = LRUCache(size=2000, ttl=120, on_event=self._on_cache_event)
         self._requests = multiprocessing.Queue()
         self._responses = multiprocessing.Queue()
         self._start_workers(settings.get("excel_pool.workers", 5))
@@ -52,6 +54,15 @@ class ExcelPool(object):
                 if task_status["state"] == "success" or task_status["state"] == "failure": return task_status
             await asyncio.sleep(1)
 
+    def shutdown(self, signum, frame):
+        for worker in self._workers:
+            logger.debug(f"joining {worker.pid}...")
+            worker.join(10)
+
+    def _on_cache_event(self, event):
+        logger.info(f"cache event: {event}")
+        pass
+
     def _start_workers(self, worker_count: int):
         for index in range(worker_count):
             worker_process = multiprocessing.Process(target=self._worker, args=(self._requests, self._responses))
@@ -68,7 +79,7 @@ class ExcelPool(object):
             else:
                 logger.info(f"_response_handler {status}")
             if "id" in status:
-                self._task_status[status["id"]] = status
+                self._task_status.put(status["id"], status)
 
     @staticmethod
     def _worker(requests: multiprocessing.Queue, responses: multiprocessing.Queue):
@@ -76,7 +87,7 @@ class ExcelPool(object):
             pythoncom.CoInitialize()
             excel = win32.DispatchEx("Excel.Application")
             excel.Visible = False
-            responses.put({"id": "EXCEL", "process_id": os.getpid(), "state": "started"})
+            responses.put({"id": f"EXCEL_{os.getpid()}", "process_id": os.getpid(), "state": "started"})
             task = {}
             while True:
                 try:
@@ -94,4 +105,4 @@ class ExcelPool(object):
             print(exception)
         finally:
             pythoncom.CoUninitialize()
-            responses.put({"id": "EXCEL", "process_id": os.getpid(), "state": "exited"})
+            responses.put({"id": f"EXCEL_{os.getpid()}", "process_id": os.getpid(), "state": "exited"})
