@@ -6,14 +6,16 @@ import asyncio
 import logging
 import multiprocessing
 import os
+import queue
 import time
 from typing import List
 import win32com.client as win32
 import pythoncom
 import uuid
+from win32com.universal import com_error
 from excel_pool.ExcelPoolTask import ExcelPoolTask
 from config import settings
-from task_handlers.HandlerManager import HandlerManager
+from task_handlers.TaskHandlerManager import TaskHandlerManager
 from utilities.LRUCache import LRUCache
 
 logger = logging.getLogger(__name__)
@@ -63,45 +65,66 @@ class ExcelPool(object):
         logger.debug(f"cache event: {event}")
 
     def _start_workers(self, worker_count: int):
-        for index in range(worker_count):
-            worker_process = multiprocessing.Process(target=self._worker, args=(self._requests, self._responses))
-            worker_process.start()
-            self._workers.append(worker_process)
+        for index in range(worker_count): self._start_worker()
         logger.debug(f"started {worker_count} workers")
+
+    def _start_worker(self):
+        logger.debug("starting worker...")
+        worker_process = multiprocessing.Process(target=self._worker, args=(self._requests, self._responses))
+        worker_process.start()
+        self._workers.append(worker_process)
+        logger.debug(f"worker {worker_process.pid} started.")
+
+    def _clear_worker(self, pid: int):
+        self._workers = [worker for worker in self._workers if worker.pid != pid]
 
     async def _response_handler(self, responses):
         loop = asyncio.get_event_loop()
         while True:
-            status: any = await loop.run_in_executor(None, responses.get)
-            if "failure" in status:
-                logger.error(f"_response_handler {status}")
+            response: any = await loop.run_in_executor(None, responses.get)
+            if not response: continue
+            if response.get("error"):
+                logger.error(f"_response_handler {response}")
             else:
-                logger.info(f"_response_handler {status}")
-            if "id" in status:
-                self._task_status.put(status["id"], status)
+                logger.info(f"_response_handler {response}")
+            if response.get("state") == "died":
+                self._clear_worker(response.get("process_id"))
+                self._start_worker()
+        if "id" in response:
+                self._task_status.put(response.get("id"), response)
 
+    # this method runs in a child process, so doesn't have normal access to logger or anything in the ExcelPool instance
     @staticmethod
     def _worker(requests: multiprocessing.Queue, responses: multiprocessing.Queue):
+        task = {"id": f"EXCEL_{os.getpid()}"}
         try:
             pythoncom.CoInitialize()
             excel = win32.DispatchEx("Excel.Application")
             excel.Visible = False
             responses.put({"id": f"EXCEL_{os.getpid()}", "process_id": os.getpid(), "state": "started"})
-            task = {}
             while True:
                 try:
-                    task = requests.get()
+                    _ = excel.Visible # this will raise com_error if the underlying Excel has died
+                    task = requests.get(timeout=60)
+                    if not task: continue
                     if not "excel_pool_task" in task: continue
                     excel_pool_task: ExcelPoolTask = task["excel_pool_task"]
-                    handler = HandlerManager.get_handler_for_task(excel_pool_task)
+                    handler = TaskHandlerManager.get_handler_for_task(excel_pool_task)
                     handler.run(task, excel_pool_task, excel, responses)
                 except KeyboardInterrupt:
                     excel.Quit()
+                    del excel
                     break
+                except com_error as exception: # most likely Excel died
+                    responses.put({"id": task["id"], "error": str(exception), "process_id": os.getpid(), "state": "died"})
+                    del excel
+                    break
+                except queue.Empty:
+                    responses.put({"id": f"EXCEL_{os.getpid()}", "process_id": os.getpid(), "state": "empty_queue"})
                 except Exception as exception:
                     responses.put({"id": task["id"], "error": str(exception), "state": "failure"})
         except Exception as exception:
-            print(exception)
+            responses.put({"id": f"EXCEL_{os.getpid()}", "error": str(exception), "state": "failure"})
         finally:
             pythoncom.CoUninitialize()
             responses.put({"id": f"EXCEL_{os.getpid()}", "process_id": os.getpid(), "state": "exited"})

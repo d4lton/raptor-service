@@ -2,13 +2,10 @@
 # Copyright ©2024 Dana Basken
 #
 
-from task_handlers.BaseHandler import BaseHandler
+from task_handlers.BaseTaskHandler import BaseTaskHandler
 from models.Worksheet import Worksheet
 
-class DemoTaskHandler(BaseHandler):
-
-    def __init__(self):
-        super().__init__()
+class DemoTaskHandler(BaseTaskHandler):
 
     def process(self):
         worksheet = Worksheet("M - Monthly", self.workbook)

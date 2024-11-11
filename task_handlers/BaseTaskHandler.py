@@ -14,7 +14,7 @@ from excel_pool.ExcelPoolTask import ExcelPoolTask
 from models.DurableIds import DurableIds
 from services import MicrosoftGraphQLClient
 
-class BaseHandler:
+class BaseTaskHandler:
 
     def __init__(self):
         self.drive_item = None
@@ -44,7 +44,7 @@ class BaseHandler:
         self.task_id = self.task["id"]
         # read the Sharepoint drive item from MS Graph API:
         self.add_response("running", "get_drive_item")
-        self.drive_item = self.get_drive_item(self.excel_pool_task.site_id, self.excel_pool_task.item_id)
+        self.drive_item = self.get_drive_item(self.excel_pool_task.group_id, self.excel_pool_task.item_id)
         self.temp_file_path = self.download_drive_item_into_temp_file()
         # open the local temp file in Excel and set our workbook variable:
         self.add_response("running", "open_workbook")
@@ -67,7 +67,7 @@ class BaseHandler:
         try:
             # read the Sharepoint drive item from MS Graph API:
             self.add_response("running", "get_drive_item")
-            self.drive_item = self.get_drive_item(self.excel_pool_task.site_id, self.excel_pool_task.item_id)
+            self.drive_item = self.get_drive_item(self.excel_pool_task.group_id, self.excel_pool_task.item_id)
             if not "@microsoft.graph.downloadUrl" in self.drive_item: raise Exception(f"Sharepoint Drive Item did not have '@microsoft.graph.downloadUrl'")
             # use the "@microsoft.graph.downloadUrl" URL to stream the contents of the Sharepoint drive item down:
             response = request("GET", self.drive_item["@microsoft.graph.downloadUrl"], stream=True)

@@ -6,7 +6,7 @@ import signal
 from fastapi import FastAPI
 from config import settings
 from excel_pool.ExcelPool import ExcelPool
-from controllers import TestController, DriveItemController, GroupController
+from controllers import ExperimentController, TestController, DriveItemController, GroupController
 from utilities import Logging
 
 Logging.colorize()
@@ -18,6 +18,7 @@ app = FastAPI(title="Drivepoint Raptor Service", version=settings.get("version")
 app.include_router(DriveItemController.router)
 app.include_router(GroupController.router)
 app.include_router(TestController.router)
+app.include_router(ExperimentController.router)
 
 signal.signal(signal.SIGINT, pool.shutdown)
 signal.signal(signal.SIGTERM, pool.shutdown)
