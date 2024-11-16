@@ -90,8 +90,8 @@ class ExcelPool(object):
             if response.get("state") == "died":
                 self._clear_worker(response.get("process_id"))
                 self._start_worker()
-        if "id" in response:
-                self._task_status.put(response.get("id"), response)
+            if "id" in response:
+                    self._task_status.put(response.get("id"), response)
 
     # this method runs in a child process, so doesn't have normal access to logger or anything in the ExcelPool instance
     @staticmethod
